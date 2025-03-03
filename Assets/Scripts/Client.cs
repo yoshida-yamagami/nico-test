@@ -20,7 +20,7 @@ public class Client : MonoBehaviour
     TcpClient tcpClient;
     bool isConnected = false; // サーバーとの接続処理が一通り終わったらtrueにする
 
-    // サーバーの情報を設定
+    // 接続先のサーバー情報を設定
 #if DEBUG
     public string host = "127.0.0.1";
     public int port = 20001;
@@ -30,14 +30,14 @@ public class Client : MonoBehaviour
 #endif
 
     /// <summary>
-    /// ゲーム？開始時の処理
+    /// 開始時の処理
     /// </summary>
     void Start()
     {
         // ワーカースレッドからメインスレッドに処理を渡す準備
         context = SynchronizationContext.Current;
 
-        // 回答入力フォームからデータを見れるようにする
+        // 回答入力フォームからデータを見られるようにする
         answerText = GameObject.Find("Comment").GetComponent<Text>();
 
         // サーバーと接続
@@ -68,24 +68,23 @@ public class Client : MonoBehaviour
         // システムメッセージとして表示
         ShowSystemMessage(receiveString);
 
-        // 受信用のスレッド起動
-        Thread thread = new Thread(new ParameterizedThreadStart(ReceiveProcess));
-        thread.Start(tcpClient);
+        // 受信用の処理をワーカースレッドで起動
+        Thread thread = new Thread(new ThreadStart(ReceiveProcess));
+        thread.Start();
 
         isConnected = true; // 接続処理が一通り完了したらtrueに更新
     }
 
     /// <summary>
-    /// 【スレッド起動想定】サーバーからの受信用の処理
+    /// 【ワーカースレッドで起動】サーバーからデータを受信するための処理
     /// </summary>
-    private async void ReceiveProcess(object value)
+    private async void ReceiveProcess()
     {
-        TcpClient tcpClient = (TcpClient)value;
         NetworkStream stream = tcpClient.GetStream();
 
         while (true)
         {
-            // サーバーからメッセージを受信
+            // ReadAsyncでサーバーからのメッセージを受信待機
             byte[] receiveBuffer = new byte[1024];
             int length = await stream.ReadAsync(receiveBuffer, 0, receiveBuffer.Length);
 
@@ -99,13 +98,13 @@ public class Client : MonoBehaviour
             string receiveString = Encoding.UTF8.GetString(receiveBuffer, 0, length);
             Debug.Log($"受信文字列: {receiveString}");
 
-            // Unityで用意しているAPIは、スレッド内で起動不可なものもある。
+            // Unityで用意しているメソッドは、ワーカースレッド内で起動不可なものもある。
             // Instantiateはメインスレッドでないと実行不可。
-            // この書き方で、メインスレッドで後ほど実行されるようになる
+            // contextを介して、ワーカースレッドからメインスレッドに処理を依頼する。
             // TODO: 何故かコメントがおかしい動きをする。。要修正
             context.Post(_ =>
             {
-                // UI上にコメントを生成
+                // UI上にコメント用のオブジェクトを生成後、テキストの内容を書き換え
                 GameObject comment = Instantiate(commentPrefab, parentObject.transform.position, Quaternion.identity, parentObject.transform);
                 comment.GetComponent<Text>().text = receiveString;
             }, null);
@@ -117,15 +116,19 @@ public class Client : MonoBehaviour
     /// </summary>
     public async void SendComment()
     {
-        //// サーバーと接続できていない場合はデータを送らないようにする
-        //if (!isConnected)
-        //{
-        //    Debug.Log("サーバーと接続できていないため送信不可");
-        //    ShowSystemMessage("サーバーと接続できていないため送信不可");
-        //}
+        // サーバーと接続できていない場合はデータを送らないようにする
+        if (!isConnected)
+        {
+            Debug.Log("サーバーと接続できていないため送信不可");
+            ShowSystemMessage("サーバーと接続できていないため送信不可");
+        }
 
-        // 入力されたメッセージを読み込み
+        // 入力フォームの文字列を読み込み
         string answer = answerText.text;
+        if (answer.Length == 0)
+        { // テキストが入力されていない場合はメッセージを送らない
+            return;
+        }
 
         // サーバーへメッセージを送信
         byte[] sendBuffer = new byte[1024];
@@ -135,7 +138,28 @@ public class Client : MonoBehaviour
     }
 
     /// <summary>
+    /// システムメッセージを表示する
+    /// </summary>
+    /// <param name="message"></param>
+    private void ShowSystemMessage(string message)
+    {
+        systemMessage.SetActive(true);
+        systemMessage.GetComponent<Text>().text = message;
+        Invoke(nameof(HideSystemMessage), 2.0f);
+    }
+
+    /// <summary>
+    /// システムメッセージを非表示にする
+    /// </summary>
+    private void HideSystemMessage()
+    {
+        systemMessage.SetActive(false);
+    }
+
+    /// <summary>
     /// ゲーム終了時にサーバーとの接続を切断する
+    /// ※OnApplicationQuitは、StartやUpdateと同様Unityが用意してくれているメソッド。
+    /// 　終了時に自動的に呼ばれる。
     /// </summary>
     async void OnApplicationQuit()
     {
@@ -148,24 +172,5 @@ public class Client : MonoBehaviour
 
         // 接続終了
         tcpClient.Close();
-    }
-
-    /// <summary>
-    /// システムメッセージを非表示にする
-    /// </summary>
-    private void HideSystemMessage()
-    {
-        systemMessage.SetActive(false);
-    }
-
-    /// <summary>
-    /// システムメッセージを表示する
-    /// </summary>
-    /// <param name="message"></param>
-    private void ShowSystemMessage(string message)
-    {
-        systemMessage.SetActive(true);
-        systemMessage.GetComponent<Text>().text = message;
-        Invoke(nameof(HideSystemMessage), 2.0f);
     }
 }
